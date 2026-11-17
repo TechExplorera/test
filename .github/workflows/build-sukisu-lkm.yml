@@ -1,0 +1,152 @@
+name: Build SukiSU LKM (A256E)
+
+# Compila SukiSU como módulo cargable (kernelsu.ko, modo LKM) contra el código
+# fuente del Galaxy A25 (SM-A256E, Linux 5.10, android12-5.10).
+#
+# Se compila primero el kernel completo para tener Module.symvers real: así
+# modpost comprueba que todos los símbolos que usa el módulo existen y genera
+# los CRC (CONFIG_MODVERSIONS) iguales a los del kernel.
+
+on:
+  push:
+  workflow_dispatch:
+    inputs:
+      kernel_repo:
+        description: "Repositorio con el código del kernel"
+        default: TechExplorera/SM-A256E
+      kernel_ref:
+        description: "Rama/commit del kernel (main = código original de Samsung)"
+        default: main
+      defconfig:
+        description: "Defconfig del kernel"
+        default: s5e8825-a25xdxx_defconfig
+      sukisu_ref:
+        description: "Commit/rama de SukiSU-Ultra (main = SukiSU-Nova con soporte LKM)"
+        default: c60f21b9e00e35e898f8d21e0612465b76b9beec
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  KERNEL_REPO: ${{ inputs.kernel_repo || 'TechExplorera/SM-A256E' }}
+  KERNEL_REF: ${{ inputs.kernel_ref || 'main' }}
+  DEFCONFIG: ${{ inputs.defconfig || 's5e8825-a25xdxx_defconfig' }}
+  SUKISU_REF: ${{ inputs.sukisu_ref || 'c60f21b9e00e35e898f8d21e0612465b76b9beec' }}
+  SUKISU_REPO: https://github.com/SukiSU-Ultra/SukiSU-Ultra.git
+  CLANG_VERSION: clang-r416183b
+  CLANG_URL: https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android12-release/clang-r416183b.tar.gz
+  MAKE_ARGS: >-
+    ARCH=arm64 LLVM=1 LLVM_IAS=1
+    PLATFORM_VERSION=12 ANDROID_MAJOR_VERSION=s TARGET_SOC=s5e8825
+    CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 300
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+          df -h /
+
+      - name: Checkout kernel source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.KERNEL_REPO }}
+          ref: ${{ env.KERNEL_REF }}
+          path: kernel
+          fetch-depth: 1
+
+      - name: Fetch SukiSU
+        run: |
+          git init -q sukisu
+          git -C sukisu remote add origin "$SUKISU_REPO"
+          git -C sukisu fetch -q --depth 1 origin "$SUKISU_REF"
+          git -C sukisu checkout -q FETCH_HEAD
+          git -C sukisu log -1 --format='SukiSU: %h %ad %s' --date=short | tee -a "$GITHUB_STEP_SUMMARY"
+          # Sin .git: evita que su Makefile intente "git fetch --unshallow"
+          rm -rf sukisu/.git
+          test -f sukisu/kernel/Kbuild || { echo "Esta versión de SukiSU no trae Kbuild para LKM"; exit 1; }
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison flex cpio kmod lz4 rsync python3 \
+            libssl-dev libelf-dev \
+            binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi
+
+      - name: Cache AOSP clang
+        id: cache-clang
+        uses: actions/cache@v4
+        with:
+          path: ~/toolchain/${{ env.CLANG_VERSION }}
+          key: aosp-${{ env.CLANG_VERSION }}
+
+      - name: Download AOSP clang
+        if: steps.cache-clang.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/toolchain/$CLANG_VERSION
+          curl -sSfL --retry 3 "$CLANG_URL" | tar -xz -C ~/toolchain/$CLANG_VERSION
+
+      - name: Set up toolchain
+        run: |
+          echo "$HOME/toolchain/$CLANG_VERSION/bin" >> "$GITHUB_PATH"
+          "$HOME/toolchain/$CLANG_VERSION/bin/clang" --version
+
+      - name: Configure kernel (${{ env.DEFCONFIG }})
+        working-directory: kernel
+        run: |
+          # El código original de Samsung no compila con -Werror=implicit-int sin esto
+          sed -i 's/^static cpn_next_cpu\[/static int cpn_next_cpu[/' kernel/sched/ems/sysbusy.c
+          make $MAKE_ARGS "$DEFCONFIG"
+          scripts/config --file .config --set-str UNUSED_KSYMS_WHITELIST gki/abi_symbollist.raw
+          make $MAKE_ARGS olddefconfig
+          grep -E '^CONFIG_(KPROBES|MODVERSIONS|MODULE_SIG|TRIM_UNUSED_KSYMS|KSU)[= ]' .config || true
+
+      - name: Build kernel (for Module.symvers)
+        working-directory: kernel
+        run: |
+          set -o pipefail
+          make $MAKE_ARGS -j"$(nproc)" 2>&1 | tee ../kernel-build.log
+          ls -la Module.symvers arch/arm64/boot/Image
+
+      - name: Build kernelsu.ko
+        working-directory: kernel
+        run: |
+          set -o pipefail
+          make $MAKE_ARGS -j"$(nproc)" M="$GITHUB_WORKSPACE/sukisu/kernel" CONFIG_KSU=m modules \
+            2>&1 | tee ../lkm-build.log
+          grep -E '^-- ' ../lkm-build.log | sort -u | tee -a "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Package module
+        run: |
+          mkdir -p dist
+          cp sukisu/kernel/kernelsu.ko dist/kernelsu-a256e.ko
+          llvm-strip -d dist/kernelsu-a256e.ko
+          cp kernel/.config dist/kernel-config
+          cp kernel-build.log lkm-build.log dist/
+          {
+            echo "### kernelsu-a256e.ko"
+            echo '```'
+            modinfo dist/kernelsu-a256e.ko
+            echo '```'
+          } | tee dist/modinfo.txt >> "$GITHUB_STEP_SUMMARY"
+          ls -la dist
+
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sukisu-lkm-a256e-${{ github.sha }}
+          path: |
+            dist/
+            kernel-build.log
+            lkm-build.log
+          if-no-files-found: warn
