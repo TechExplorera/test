@@ -161,28 +161,49 @@ jobs:
           echo "Modo fast: sin comprobación de símbolos (KBUILD_MODPOST_WARN=1)" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Build kernelsu.ko
+        id: modbuild
         working-directory: kernel
         run: |
-          set -o pipefail
           EXTRA=""
           [ "$MODE" = "fast" ] && EXTRA="KBUILD_MODPOST_WARN=1"
+          rc=0
           make $MAKE_ARGS -j"$(nproc)" M="$GITHUB_WORKSPACE/sukisu/kernel" CONFIG_KSU=m $EXTRA modules \
-            2>&1 | tee ../lkm-build.log
-          grep -E '^-- ' ../lkm-build.log | sort -u | tee -a "$GITHUB_STEP_SUMMARY" || true
+            > ../lkm-build.log 2>&1 || rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          grep -E '^-- ' ../lkm-build.log | sort -u || true
+          # Si modpost encuentra símbolos sin exportar, el .ko no se puede cargar
+          # en este kernel; se guarda la lista como informe en vez de morir en rojo.
+          if grep -q 'modpost:.*undefined' ../lkm-build.log; then
+            grep -oE 'modpost: "[^"]+"' ../lkm-build.log | sed 's/modpost: //' | tr -d '"' \
+              | sort -u > ../undefined-symbols.txt
+            n=$(wc -l < ../undefined-symbols.txt)
+            {
+              echo "## ⚠️ $n símbolos sin resolver: el .ko NO es cargable en este kernel"
+              echo "SukiSU usa símbolos internos (SELinux, etc.) que el kernel de Samsung no exporta."
+              echo "Para uso real, integra SukiSU dentro del kernel (built-in), no como módulo."
+              echo '<details><summary>símbolos</summary>'
+              echo ''; echo '```'; cat ../undefined-symbols.txt; echo '```'; echo '</details>'
+            } >> "$GITHUB_STEP_SUMMARY"
+          elif [ $rc -ne 0 ]; then
+            echo "La compilación del módulo falló (ver lkm-build.log)" >> "$GITHUB_STEP_SUMMARY"
+            exit $rc
+          fi
 
       - name: Package module
+        if: always()
         run: |
           mkdir -p dist
-          cp sukisu/kernel/kernelsu.ko dist/kernelsu-a256e.ko
-          llvm-strip -d dist/kernelsu-a256e.ko
           cp kernel/.config dist/kernel-config
-          cp kernel-build.log lkm-build.log dist/ 2>/dev/null || true
-          {
-            echo "### kernelsu-a256e.ko ($MODE)"
-            echo '```'
-            modinfo dist/kernelsu-a256e.ko
-            echo '```'
-          } | tee dist/modinfo.txt >> "$GITHUB_STEP_SUMMARY"
+          cp kernel-build.log lkm-build.log undefined-symbols.txt dist/ 2>/dev/null || true
+          if [ -f sukisu/kernel/kernelsu.ko ]; then
+            cp sukisu/kernel/kernelsu.ko dist/kernelsu-a256e.ko
+            llvm-strip -d dist/kernelsu-a256e.ko
+            {
+              echo "### kernelsu-a256e.ko ($MODE)"; echo '```'; modinfo dist/kernelsu-a256e.ko; echo '```'
+            } | tee dist/modinfo.txt >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No se generó kernelsu.ko (ver símbolos sin resolver)." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
           ls -la dist
 
       - name: Upload artifact

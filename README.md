@@ -20,7 +20,15 @@ Se ejecuta en cada push. Para elegir versiones: **Actions → Build SukiSU LKM (
 - **`full`**: compila el kernel completo para obtener un `Module.symvers` real. Así `modpost` comprueba que existan todos los símbolos que usa el módulo y genera los CRC de `CONFIG_MODVERSIONS`. Es el único que produce un `.ko` cargable. ~25 min.
 - **`fast`**: solo prepara el árbol (`modules_prepare` + SELinux) y compila el módulo con `KBUILD_MODPOST_WARN=1`. ~5 min. **No** comprueba símbolos, así que sirve para ver si el código del módulo compila, no para un `.ko` final.
 
-## El detalle de los símbolos (importante)
+## Conclusión: SukiSU no sale como módulo cargable en este kernel
+
+Tras compilar con el `Module.symvers` real, `modpost` reporta **~90 símbolos sin resolver**. Unos pocos (`prepare_creds`, `__put_cred`, `kdp_usecount_dec_and_test`) se arreglan exportándolos, pero la mayoría son **internos de SELinux** (`policydb_read/write`, `sidtab_*`, `avtab_*`, `ebitmap_*`, `mls_*`, `avc_has_perm`, `selinux_state`…) más `kallsyms_lookup_name`, `path_mount`, `kernel_read`, etc. Esos **no están exportados en ninguna parte del kernel** y no se pueden habilitar con la whitelist: harían falta decenas de `EXPORT_SYMBOL` repartidos por el código de SELinux/fs.
+
+El código de SukiSU que toca la política de SELinux está pensado para ir **dentro del kernel** (built-in), no como `.ko` externo. Por eso el método que sí funciona es integrar SukiSU en el kernel (rama de trabajo del repo `SM-A256E`), no este modo LKM.
+
+El workflow en modo `full` ya no muere en rojo: guarda la lista de símbolos que faltan como informe (`undefined-symbols.txt`) para dejar constancia.
+
+## El detalle de los símbolos (parcial)
 
 SukiSU usa `prepare_creds()` y `put_cred()`. En el kernel de Samsung eso engancha con 3 símbolos que, por defecto, **no están disponibles para un módulo externo**:
 
