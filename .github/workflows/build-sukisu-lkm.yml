@@ -37,10 +37,6 @@ on:
         options:
           - full
           - fast
-      export_cred_symbols:
-        description: "Exportar prepare_creds/__put_cred/kdp_usecount_dec_and_test (necesario para SukiSU en el kernel de Samsung, solo modo full)"
-        default: true
-        type: boolean
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -56,7 +52,6 @@ env:
   SUKISU_URL: ${{ inputs.sukisu_url || 'https://github.com/SukiSU-Ultra/SukiSU-Ultra.git' }}
   SUKISU_REF: ${{ inputs.sukisu_ref || 'c60f21b9e00e35e898f8d21e0612465b76b9beec' }}
   MODE: ${{ inputs.mode || 'full' }}
-  EXPORT_CRED_SYMBOLS: ${{ inputs.export_cred_symbols == false && 'false' || 'true' }}
   CLANG_VERSION: clang-r416183b
   CLANG_URL: https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android12-release/clang-r416183b.tar.gz
   MAKE_ARGS: >-
@@ -135,7 +130,7 @@ jobs:
       # (kdp_usecount_dec_and_test); además TRIM_UNUSED_KSYMS borra prepare_creds y
       # __put_cred. Sin esto, modpost falla con "undefined" en modo full.
       - name: Export cred symbols needed by SukiSU
-        if: env.MODE == 'full' && env.EXPORT_CRED_SYMBOLS == 'true'
+        if: env.MODE == 'full'
         working-directory: kernel
         run: |
           for s in prepare_creds __put_cred kdp_usecount_dec_and_test; do

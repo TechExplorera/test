@@ -14,7 +14,6 @@ Se ejecuta en cada push. Para elegir versiones: **Actions → Build SukiSU LKM (
 | `sukisu_url` | `https://github.com/SukiSU-Ultra/SukiSU-Ultra.git` | URL git de SukiSU |
 | `sukisu_ref` | `c60f21b` | Commit/rama de SukiSU |
 | `mode` | `full` | `full` o `fast` (ver abajo) |
-| `export_cred_symbols` | `true` | Exportar los símbolos que SukiSU necesita (solo modo full) |
 
 ## Modos
 
@@ -28,7 +27,7 @@ SukiSU usa `prepare_creds()` y `put_cred()`. En el kernel de Samsung eso enganch
 - `prepare_creds`, `__put_cred`: están exportados en `kernel/cred.c`, pero `CONFIG_TRIM_UNUSED_KSYMS` los borra porque no están en la whitelist `gki/abi_symbollist.raw`.
 - `kdp_usecount_dec_and_test`: es interno de la protección KDP de Samsung (`drivers/uh/kdp.c`); la macro `put_cred()` lo llama porque `CONFIG_KDP_CRED=y`.
 
-Sin resolverlos, `modpost` corta la compilación con "undefined". El paso **Export cred symbols** los añade a la whitelist y exporta el de KDP, por eso el modo `full` necesita `export_cred_symbols=true`.
+Sin resolverlos, `modpost` corta la compilación con "undefined". En modo `full`, el paso **Export cred symbols** los añade a la whitelist y exporta el de KDP, por eso el `.ko` enlaza.
 
 **Consecuencia para flashear:** como esos símbolos no están en el kernel de fábrica, este `.ko` solo carga limpio en un kernel compilado con ellos exportados (el que produce este mismo workflow en modo full). En el kernel **de fábrica** de Samsung, `insmod` fallaría con "unknown symbol". Por eso, para uso real en el teléfono, suele ser más fiable el método **integrado** (SukiSU compilado dentro del kernel), que está en la rama de trabajo del repo `SM-A256E`.
 
