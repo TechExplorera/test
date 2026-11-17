@@ -3,26 +3,44 @@ name: Build SukiSU LKM (A256E)
 # Compila SukiSU como módulo cargable (kernelsu.ko, modo LKM) contra el código
 # fuente del Galaxy A25 (SM-A256E, Linux 5.10, android12-5.10).
 #
-# Se compila primero el kernel completo para tener Module.symvers real: así
-# modpost comprueba que todos los símbolos que usa el módulo existen y genera
-# los CRC (CONFIG_MODVERSIONS) iguales a los del kernel.
+# Modos (entrada "mode"):
+#   full  -> compila el kernel entero para tener un Module.symvers real; modpost
+#            comprueba TODOS los símbolos y genera los CRC de CONFIG_MODVERSIONS.
+#            Es el único que produce un .ko realmente cargable. ~25 min.
+#   fast  -> solo prepara el árbol (modules_prepare) y compila el módulo con
+#            KBUILD_MODPOST_WARN=1. ~5 min, pero NO comprueba símbolos: sirve para
+#            ver si el código del módulo compila, no para un .ko final.
 
 on:
   push:
   workflow_dispatch:
     inputs:
-      kernel_repo:
-        description: "Repositorio con el código del kernel"
-        default: TechExplorera/SM-A256E
+      kernel_url:
+        description: "URL git del código del kernel"
+        default: https://github.com/TechExplorera/SM-A256E
       kernel_ref:
         description: "Rama/commit del kernel (main = código original de Samsung)"
         default: main
       defconfig:
         description: "Defconfig del kernel"
         default: s5e8825-a25xdxx_defconfig
+      sukisu_url:
+        description: "URL git de SukiSU"
+        default: https://github.com/SukiSU-Ultra/SukiSU-Ultra.git
       sukisu_ref:
-        description: "Commit/rama de SukiSU-Ultra (main = SukiSU-Nova con soporte LKM)"
+        description: "Commit/rama de SukiSU (main = SukiSU-Nova con soporte LKM)"
         default: c60f21b9e00e35e898f8d21e0612465b76b9beec
+      mode:
+        description: "full = kernel completo + .ko cargable; fast = solo probar que el módulo compila"
+        default: full
+        type: choice
+        options:
+          - full
+          - fast
+      export_cred_symbols:
+        description: "Exportar prepare_creds/__put_cred/kdp_usecount_dec_and_test (necesario para SukiSU en el kernel de Samsung, solo modo full)"
+        default: true
+        type: boolean
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -32,11 +50,13 @@ permissions:
   contents: read
 
 env:
-  KERNEL_REPO: ${{ inputs.kernel_repo || 'TechExplorera/SM-A256E' }}
+  KERNEL_URL: ${{ inputs.kernel_url || 'https://github.com/TechExplorera/SM-A256E' }}
   KERNEL_REF: ${{ inputs.kernel_ref || 'main' }}
   DEFCONFIG: ${{ inputs.defconfig || 's5e8825-a25xdxx_defconfig' }}
+  SUKISU_URL: ${{ inputs.sukisu_url || 'https://github.com/SukiSU-Ultra/SukiSU-Ultra.git' }}
   SUKISU_REF: ${{ inputs.sukisu_ref || 'c60f21b9e00e35e898f8d21e0612465b76b9beec' }}
-  SUKISU_REPO: https://github.com/SukiSU-Ultra/SukiSU-Ultra.git
+  MODE: ${{ inputs.mode || 'full' }}
+  EXPORT_CRED_SYMBOLS: ${{ inputs.export_cred_symbols == false && 'false' || 'true' }}
   CLANG_VERSION: clang-r416183b
   CLANG_URL: https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android12-release/clang-r416183b.tar.gz
   MAKE_ARGS: >-
@@ -55,23 +75,23 @@ jobs:
           sudo docker image prune --all --force || true
           df -h /
 
-      - name: Checkout kernel source
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ env.KERNEL_REPO }}
-          ref: ${{ env.KERNEL_REF }}
-          path: kernel
-          fetch-depth: 1
+      - name: Fetch kernel source
+        run: |
+          git clone -q --depth 1 "$KERNEL_URL" kernel
+          if [ "$KERNEL_REF" != "HEAD" ] && ! git -C kernel rev-parse --verify -q "$KERNEL_REF^{commit}" >/dev/null; then
+            git -C kernel fetch -q --depth 1 origin "$KERNEL_REF"
+            git -C kernel checkout -q FETCH_HEAD
+          fi
+          git -C kernel log -1 --format='Kernel: %h %ad %s' --date=short | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Fetch SukiSU
         run: |
           git init -q sukisu
-          git -C sukisu remote add origin "$SUKISU_REPO"
+          git -C sukisu remote add origin "$SUKISU_URL"
           git -C sukisu fetch -q --depth 1 origin "$SUKISU_REF"
           git -C sukisu checkout -q FETCH_HEAD
           git -C sukisu log -1 --format='SukiSU: %h %ad %s' --date=short | tee -a "$GITHUB_STEP_SUMMARY"
-          # Sin .git: evita que su Makefile intente "git fetch --unshallow"
-          rm -rf sukisu/.git
+          rm -rf sukisu/.git  # evita que su Makefile intente "git fetch --unshallow"
           test -f sukisu/kernel/Kbuild || { echo "Esta versión de SukiSU no trae Kbuild para LKM"; exit 1; }
 
       - name: Install build dependencies
@@ -104,24 +124,54 @@ jobs:
         working-directory: kernel
         run: |
           # El código original de Samsung no compila con -Werror=implicit-int sin esto
-          sed -i 's/^static cpn_next_cpu\[/static int cpn_next_cpu[/' kernel/sched/ems/sysbusy.c
+          [ -f kernel/sched/ems/sysbusy.c ] && \
+            sed -i 's/^static cpn_next_cpu\[/static int cpn_next_cpu[/' kernel/sched/ems/sysbusy.c || true
           make $MAKE_ARGS "$DEFCONFIG"
           scripts/config --file .config --set-str UNUSED_KSYMS_WHITELIST gki/abi_symbollist.raw
           make $MAKE_ARGS olddefconfig
-          grep -E '^CONFIG_(KPROBES|MODVERSIONS|MODULE_SIG|TRIM_UNUSED_KSYMS|KSU)[= ]' .config || true
+          grep -E '^CONFIG_(KPROBES|MODVERSIONS|MODULE_SIG|TRIM_UNUSED_KSYMS|KDP_CRED|KSU)[= ]' .config || true
 
-      - name: Build kernel (for Module.symvers)
+      # Samsung activa CONFIG_KDP_CRED, así que put_cred() llama a un símbolo interno
+      # (kdp_usecount_dec_and_test); además TRIM_UNUSED_KSYMS borra prepare_creds y
+      # __put_cred. Sin esto, modpost falla con "undefined" en modo full.
+      - name: Export cred symbols needed by SukiSU
+        if: env.MODE == 'full' && env.EXPORT_CRED_SYMBOLS == 'true'
+        working-directory: kernel
+        run: |
+          for s in prepare_creds __put_cred kdp_usecount_dec_and_test; do
+            grep -qxF "$s" gki/abi_symbollist.raw || echo "$s" >> gki/abi_symbollist.raw
+          done
+          if [ -f drivers/uh/kdp.c ] && ! grep -q 'EXPORT_SYMBOL(kdp_usecount_dec_and_test)' drivers/uh/kdp.c; then
+            printf '\n#include <linux/export.h>\nEXPORT_SYMBOL(kdp_usecount_dec_and_test);\n' >> drivers/uh/kdp.c
+          fi
+          echo "Símbolos exportados: prepare_creds __put_cred kdp_usecount_dec_and_test" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Build kernel (modo full -> Module.symvers real)
+        if: env.MODE == 'full'
         working-directory: kernel
         run: |
           set -o pipefail
           make $MAKE_ARGS -j"$(nproc)" 2>&1 | tee ../kernel-build.log
           ls -la Module.symvers arch/arm64/boot/Image
 
+      - name: Prepare modules (modo fast -> sin symvers)
+        if: env.MODE == 'fast'
+        working-directory: kernel
+        run: |
+          set -o pipefail
+          make $MAKE_ARGS -j"$(nproc)" modules_prepare
+          # SukiSU usa flask.h, que se genera al compilar SELinux
+          make $MAKE_ARGS -j"$(nproc)" security/selinux/
+          : > ../kernel-build.log
+          echo "Modo fast: sin comprobación de símbolos (KBUILD_MODPOST_WARN=1)" | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Build kernelsu.ko
         working-directory: kernel
         run: |
           set -o pipefail
-          make $MAKE_ARGS -j"$(nproc)" M="$GITHUB_WORKSPACE/sukisu/kernel" CONFIG_KSU=m modules \
+          EXTRA=""
+          [ "$MODE" = "fast" ] && EXTRA="KBUILD_MODPOST_WARN=1"
+          make $MAKE_ARGS -j"$(nproc)" M="$GITHUB_WORKSPACE/sukisu/kernel" CONFIG_KSU=m $EXTRA modules \
             2>&1 | tee ../lkm-build.log
           grep -E '^-- ' ../lkm-build.log | sort -u | tee -a "$GITHUB_STEP_SUMMARY" || true
 
@@ -131,9 +181,9 @@ jobs:
           cp sukisu/kernel/kernelsu.ko dist/kernelsu-a256e.ko
           llvm-strip -d dist/kernelsu-a256e.ko
           cp kernel/.config dist/kernel-config
-          cp kernel-build.log lkm-build.log dist/
+          cp kernel-build.log lkm-build.log dist/ 2>/dev/null || true
           {
-            echo "### kernelsu-a256e.ko"
+            echo "### kernelsu-a256e.ko ($MODE)"
             echo '```'
             modinfo dist/kernelsu-a256e.ko
             echo '```'
@@ -144,7 +194,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: sukisu-lkm-a256e-${{ github.sha }}
+          name: sukisu-lkm-a256e-${{ inputs.mode || 'full' }}-${{ github.sha }}
           path: |
             dist/
             kernel-build.log
