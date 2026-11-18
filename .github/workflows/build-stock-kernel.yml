@@ -1,0 +1,119 @@
+name: Build stock kernel (A256E)
+
+# Compila un árbol de kernel del SM-A256E TAL CUAL (sin SuSFS/SukiSU/OC),
+# para verificar que compila limpio con el clang oficial de AOSP.
+# Pensado para validar el source de One UI 8 (Android 16) antes de adaptarlo.
+
+on:
+  push:
+  workflow_dispatch:
+    inputs:
+      kernel_url:
+        description: "URL git del código del kernel"
+        default: https://github.com/TechExplorera/oneui8-source
+      kernel_ref:
+        description: "Rama/commit del kernel"
+        default: main
+      defconfig:
+        description: "Defconfig"
+        default: s5e8825-a25xxx_defconfig
+      target_soc:
+        description: "TARGET_SOC (el A25 es s5e8825; el build_kernel.sh de Samsung trae s5e9925 por error)"
+        default: s5e8825
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  KERNEL_URL: ${{ inputs.kernel_url || 'https://github.com/TechExplorera/oneui8-source' }}
+  KERNEL_REF: ${{ inputs.kernel_ref || 'main' }}
+  DEFCONFIG: ${{ inputs.defconfig || 's5e8825-a25xxx_defconfig' }}
+  TARGET_SOC: ${{ inputs.target_soc || 's5e8825' }}
+  CLANG_VERSION: clang-r416183b
+  CLANG_URL: https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android12-release/clang-r416183b.tar.gz
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 300
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+          df -h /
+
+      - name: Fetch kernel source
+        run: |
+          git clone -q --depth 1 "$KERNEL_URL" kernel
+          if [ "$KERNEL_REF" != "HEAD" ] && ! git -C kernel rev-parse --verify -q "$KERNEL_REF^{commit}" >/dev/null; then
+            git -C kernel fetch -q --depth 1 origin "$KERNEL_REF"
+            git -C kernel checkout -q FETCH_HEAD
+          fi
+          git -C kernel log -1 --format='Kernel: %h %s' | tee -a "$GITHUB_STEP_SUMMARY"
+          printf 'Versión: %s.%s.%s\n' \
+            "$(awk '/^VERSION =/{print $3}' kernel/Makefile)" \
+            "$(awk '/^PATCHLEVEL =/{print $3}' kernel/Makefile)" \
+            "$(awk '/^SUBLEVEL =/{print $3}' kernel/Makefile)" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison flex cpio kmod lz4 rsync python3 \
+            libssl-dev libelf-dev \
+            binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi
+
+      - name: Cache AOSP clang
+        id: cache-clang
+        uses: actions/cache@v4
+        with:
+          path: ~/toolchain/${{ env.CLANG_VERSION }}
+          key: aosp-${{ env.CLANG_VERSION }}
+
+      - name: Download AOSP clang
+        if: steps.cache-clang.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/toolchain/$CLANG_VERSION
+          curl -sSfL --retry 3 "$CLANG_URL" | tar -xz -C ~/toolchain/$CLANG_VERSION
+
+      - name: Set up toolchain
+        run: |
+          echo "$HOME/toolchain/$CLANG_VERSION/bin" >> "$GITHUB_PATH"
+          "$HOME/toolchain/$CLANG_VERSION/bin/clang" --version
+
+      - name: Build
+        working-directory: kernel
+        run: |
+          set -o pipefail
+          # Bug de Samsung: a cpn_next_cpu le falta el tipo y el kernel usa
+          # -Werror=implicit-int. Corrección mínima para que compile (no es un mod).
+          [ -f kernel/sched/ems/sysbusy.c ] && \
+            sed -i 's/^static cpn_next_cpu\[/static int cpn_next_cpu[/' kernel/sched/ems/sysbusy.c || true
+          MA="ARCH=arm64 LLVM=1 LLVM_IAS=1 PLATFORM_VERSION=12 ANDROID_MAJOR_VERSION=s TARGET_SOC=$TARGET_SOC CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_COMPAT=arm-linux-gnueabi-"
+          make $MA "$DEFCONFIG"
+          make $MA olddefconfig
+          make $MA -j"$(nproc)" 2>&1 | tee ../build.log
+          ls -la arch/arm64/boot/Image arch/arm64/boot/dts/exynos/s5e8825.dtb || true
+
+      - name: Collect artifacts
+        if: always()
+        run: |
+          mkdir -p dist
+          cp kernel/arch/arm64/boot/Image dist/ 2>/dev/null || true
+          cp kernel/arch/arm64/boot/dts/exynos/s5e8825.dtb dist/ 2>/dev/null || true
+          cp kernel/.config dist/config 2>/dev/null || true
+          cp build.log dist/ 2>/dev/null || true
+          ls -la dist
+
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stock-kernel-${{ github.sha }}
+          path: dist/
+          if-no-files-found: warn
