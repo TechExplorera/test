@@ -71,8 +71,10 @@ jobs:
         if: steps.fw.outputs.ok == 'true'
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq erofs-utils
-          pip install --quiet lz4
+          # python3-lz4 del sistema: "python3 -I" ignora los paquetes de usuario de pip
+          sudo apt-get install -y -qq erofs-utils python3-lz4
+          python3 -I -c "import lz4.frame, lz4.block; print('lz4', lz4.version.version)"
+          mkfs.erofs --version || true
 
       - name: Extraer super.img del firmware
         if: steps.fw.outputs.ok == 'true'
