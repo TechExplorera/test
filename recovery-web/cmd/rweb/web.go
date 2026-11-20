@@ -23,7 +23,7 @@ import (
 	"unsafe"
 )
 
-const version = "0.2.0"
+const version = "0.3.0"
 
 //go:embed web
 var webFS embed.FS
@@ -53,6 +53,10 @@ func serveHTTP(addr string) error {
 	mux.HandleFunc("/api/reboot", apiReboot)
 	mux.HandleFunc("/api/stock", apiStock)
 	mux.HandleFunc("/api/bcb", apiBCB)
+	mux.HandleFunc("/api/lp", apiLP)
+	mux.HandleFunc("/api/lpdump", apiLPDump)
+	mux.HandleFunc("/api/lpflash", apiLPFlash)
+	mux.HandleFunc("/api/vbmeta", apiVbmeta)
 	srv := &http.Server{Addr: addr, Handler: guard(mux), ReadHeaderTimeout: 15 * time.Second}
 	log.Printf("HTTP escuchando en http://%s", addr)
 	return srv.ListenAndServe()

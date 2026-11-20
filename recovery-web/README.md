@@ -23,6 +23,44 @@ son los originales; solo se sustituye `/system/bin/recovery` por `rweb`.
 - Reinicio: sistema, recovery, download, fastbootd, apagar
 - Recovery stock de Samsung: menú en pantalla, borrar caché, restablecer de fábrica
 
+## Pestaña Super (v0.3)
+Lee los metadatos LP de `super` y permite **backup** y **flasheo** de cada partición lógica
+(`system`, `product`, `vendor`, `odm`, `vendor_dlkm`). Escribe la imagen dentro del espacio ya
+asignado, sin tocar los metadatos. Acepta EROFS, ext4 o f2fs en formato raw; rechaza imágenes
+sparse, comprimidas o mayores que la partición. También muestra los flags de `vbmeta`
+(para arrancar con particiones modificadas hace falta la verificación desactivada, flag 2).
+
+## System y product optimizados (debloat)
+Firmware `A256EXXU7CYE1`, lista conservadora en `debloat/`:
+
+| Imagen | Original | Optimizada |
+|---|---|---|
+| system | 6492 MiB | 3815 MiB (EROFS lz4hc, 27 apps menos) |
+| product | 1826 MiB | 1145 MiB (EROFS lz4hc, sin DuoStub) |
+
+Quitadas: Facebook (3), OneDrive, Link to Windows (2), AR Emoji (4), telemetría y diagnóstico
+(DiagMon, DeviceQualityAgent, PhoneErrService, SilentLog, DsmsAPK, knoxanalyticsagent, HdmApk,
+IpsGeofence), KnoxGuard, KLMSAgent, pruebas de fábrica (2), salvapantallas (2), EasterEgg,
+KidsHome_Installer, GearManagerStub, DuoStub. No se toca Knox Core, cámara, teclado, OTA ni Google.
+
+Proceso (`tools/build_partition.sh`), verificado archivo por archivo:
+1. `erofs_meta.py dump`: dueño, permisos y xattrs (SELinux, capabilities) del original.
+2. Extracción con `fsck.erofs --preserve` y eliminación de las rutas de la lista.
+3. `erofs_meta.py apply`: restaura los metadatos (fsck.erofs no extrae xattrs).
+4. `mkfs.erofs -zlz4hc,12`.
+5. Verificación: 0 diferencias de metadatos con el original (salvo lo eliminado; los permisos
+   de symlinks no cuentan, Linux los ignora), contenido idéntico, `fsck.erofs` correcto.
+
+El workflow `.github/workflows/build-debloat.yml` hace lo mismo en GitHub y publica las imágenes
+como artifact. Necesita el secret `FIRMWARE_URL` (enlace de descarga del ZIP del firmware).
+
+### Flashear
+1. Recovery Web → **Super**: comprueba que `vbmeta` tiene la verificación desactivada.
+2. **Backup** de `system` y `product` (o conserva el firmware para reflashear con Odin).
+3. **Flashear** `system.img` y `product.img`.
+4. Reinicia a sistema. El primer arranque tarda más (Android reconstruye la lista de paquetes).
+Para volver atrás: flashea los backups desde la pestaña Super, o el firmware completo con Odin.
+
 ## Orden de arranque (BCB)
 Android y el bootloader se comunican con el recovery a través de los primeros 2048 bytes de la partición `misc`.
 Mientras ahí haya `boot-recovery` o `boot-fastboot`, el teléfono arranca recovery en cada reinicio.

@@ -45,6 +45,7 @@ a{color:var(--acc)}
 <nav id="nav">
   <button data-t="info" class="on">Inicio</button>
   <button data-t="parts">Particiones</button>
+  <button data-t="super">Super</button>
   <button data-t="files">Archivos</button>
   <button data-t="shell">Terminal</button>
   <button data-t="logs">Logs</button>
@@ -75,6 +76,26 @@ a{color:var(--acc)}
     <p>Escribe el nombre de la partición para confirmar:</p>
     <div class="row"><input type="text" id="fconfirm" style="max-width:260px"><button class="b d" id="fgo">Flashear</button><button class="b" id="fcancel">Cancelar</button></div>
     <div class="bar"><i id="fbar"></i></div><div id="fmsg" class="mut"></div>
+  </div>
+</section>
+
+<section id="super">
+  <div class="card"><h2>Verificación de arranque (vbmeta)</h2>
+    <p class="mut">Para arrancar con <code>system</code>/<code>product</code>/<code>vendor</code> modificados, <code>vbmeta</code> debe tener la verificación desactivada (flag 2). Si no, el teléfono entrará en bucle o en recovery.</p>
+    <div id="vbm" class="mut">—</div>
+  </div>
+  <div class="card">
+    <h2>Particiones lógicas en super</h2>
+    <p class="mut" id="lpsum"></p>
+    <table><thead><tr><th>Nombre</th><th>Formato</th><th style="text-align:right">Tamaño</th><th></th></tr></thead><tbody id="lptable"></tbody></table>
+    <p class="mut" style="margin-top:8px">Flashear escribe la imagen dentro del espacio ya asignado a la partición (no cambia los metadatos de super). La imagen debe ser <b>raw</b> (no sparse) y caber en ese espacio. Haz <b>Backup</b> antes.</p>
+  </div>
+  <div class="card" id="lpflashcard" style="display:none">
+    <h2>Flashear lógica <span id="lpname" class="warn"></span></h2>
+    <div class="row"><input type="file" id="lpfile"></div>
+    <p>Escribe el nombre de la partición para confirmar:</p>
+    <div class="row"><input type="text" id="lpconfirm" style="max-width:260px"><button class="b d" id="lpgo">Flashear</button><button class="b" id="lpcancel">Cancelar</button></div>
+    <div class="bar"><i id="lpbar"></i></div><div id="lpmsg" class="mut"></div>
   </div>
 </section>
 
@@ -147,7 +168,31 @@ function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','
 async function api(u,o){const r=await fetch(u,o);if(!r.ok)throw new Error(await r.text()||r.status);return r.headers.get('content-type')?.includes('json')?r.json():r.text()}
 function dl(u){const a=document.createElement('a');a.href=u;a.download='';document.body.appendChild(a);a.click();a.remove()}
 
-$$('#nav button').forEach(b=>b.onclick=()=>{$$('#nav button').forEach(x=>x.classList.toggle('on',x===b));$$('section').forEach(s=>s.classList.toggle('on',s.id===b.dataset.t));if(b.dataset.t==='parts')loadParts();if(b.dataset.t==='files')loadDir()});
+$$('#nav button').forEach(b=>b.onclick=()=>{$$('#nav button').forEach(x=>x.classList.toggle('on',x===b));$$('section').forEach(s=>s.classList.toggle('on',s.id===b.dataset.t));if(b.dataset.t==='parts')loadParts();if(b.dataset.t==='files')loadDir();if(b.dataset.t==='super')loadSuper()});
+
+let LP=[],VBOK=false;
+async function loadSuper(){
+  try{const v=await api('/api/vbmeta');VBOK=v[0].present&&v[0].verification_disabled;
+    $('#vbm').innerHTML=v.map(x=>`<div><b>${x.name}</b>: ${!x.present?'<span class="mut">no encontrado</span>':`flags=${x.flags} · ${x.verification_disabled?'<span class="ok">verificación desactivada</span>':x.hashtree_disabled?'<span class="warn">solo dm-verity desactivado</span>':'<span class="bad">verificación ACTIVA</span>'}`}</div>`).join('')}catch(e){$('#vbm').textContent=e.message}
+  try{const l=await api('/api/lp');LP=l.partitions;
+    $('#lpsum').textContent=`super: ${hs(l.super_size)} · asignado: ${hs(l.used)} · libre: ${hs(l.super_size-l.used)}`;
+    $('#lptable').innerHTML=LP.map(p=>`<tr><td><b>${esc(p.name)}</b> <span class="mut">${esc(p.group)}</span></td><td class="mut">${esc(p.fs)}</td><td class="num">${hs(p.size)}</td><td style="text-align:right;white-space:nowrap"><button class="b" onclick="dl('/api/lpdump?name=${encodeURIComponent(p.name)}')">Backup</button> <button class="b d" onclick="openLP('${esc(p.name)}')">Flashear</button></td></tr>`).join('')}
+  catch(e){$('#lpsum').innerHTML='<span class="bad">'+esc(e.message)+'</span>'}
+}
+let LPF=null;
+function openLP(n){LPF=n;$('#lpname').textContent=n;$('#lpconfirm').value='';$('#lpfile').value='';$('#lpbar').style.width=0;$('#lpmsg').textContent=VBOK?'':'⚠ vbmeta tiene la verificación activa: con una imagen modificada el teléfono no arrancará.';$('#lpflashcard').style.display='block';$('#lpflashcard').scrollIntoView({behavior:'smooth'})}
+$('#lpcancel').onclick=()=>{$('#lpflashcard').style.display='none';LPF=null};
+$('#lpgo').onclick=()=>{
+  const f=$('#lpfile').files[0];if(!f)return toast('Elige un archivo','warn');
+  if($('#lpconfirm').value!==LPF)return toast('El nombre no coincide','warn');
+  const p=LP.find(x=>x.name===LPF);if(p&&f.size>p.size)return toast('La imagen no cabe en la partición','bad');
+  if(!VBOK&&!confirm('vbmeta tiene la verificación activa. ¿Flashear de todos modos?'))return;
+  const x=new XMLHttpRequest();x.open('POST','/api/lpflash?name='+encodeURIComponent(LPF));x.setRequestHeader('X-RWeb','1');x.setRequestHeader('X-Confirm',LPF);
+  x.upload.onprogress=e=>{if(e.lengthComputable){$('#lpbar').style.width=(e.loaded/e.total*100)+'%';$('#lpmsg').textContent=hs(e.loaded)+' / '+hs(e.total)}};
+  x.onload=()=>{if(x.status===200){$('#lpmsg').innerHTML='<span class="ok">Flasheado correctamente.</span>';toast('Flasheado '+LPF,'ok');loadSuper()}else{$('#lpmsg').innerHTML='<span class="bad">'+esc(x.responseText)+'</span>'}};
+  x.onerror=()=>$('#lpmsg').innerHTML='<span class="bad">Conexión perdida</span>';
+  $('#lpmsg').textContent='Enviando…';x.send(f);
+};
 
 async function loadInfo(){
   try{const i=await api('/api/info');
