@@ -149,11 +149,11 @@ func dhcpReply(p []byte, srv, cli, mask net.IP) []byte {
 	r := make([]byte, 240, 300)
 	r[0] = 2 // BOOTREPLY
 	r[1], r[2] = p[1], p[2]
-	copy(r[4:8], p[4:8])       // xid
-	copy(r[10:12], p[10:12])   // flags
-	copy(r[16:20], cli)        // yiaddr
-	copy(r[20:24], srv)        // siaddr
-	copy(r[28:44], p[28:44])   // chaddr
+	copy(r[4:8], p[4:8])     // xid
+	copy(r[10:12], p[10:12]) // flags
+	copy(r[16:20], cli)      // yiaddr
+	copy(r[20:24], srv)      // siaddr
+	copy(r[28:44], p[28:44]) // chaddr
 	binary.BigEndian.PutUint32(r[236:240], 0x63825363)
 	lease := []byte{0, 1, 0x51, 0x80} // 86400 s
 	r = append(r, 53, 1, reply)

@@ -10,7 +10,8 @@ son los originales; solo se sustituye `/system/bin/recovery` por `rweb`.
 | Daemon `rweb` (Go, estático arm64) | Compila; API probada en PC (modo `-dev`) |
 | DHCP mínimo | Test unitario OK |
 | Empaquetado | Reconstruye el stock byte a byte; imagen verificada |
-| Arranque en el teléfono | **Sin probar** |
+| Arranque en el teléfono | v0.1 probado: arranca, red USB y panel funcionan |
+| Salir de recovery / fastbootd | v0.2: limpia el BCB de `misc` y cede fastbootd/OTA/borrados al recovery stock (sin probar) |
 | SELinux | Dominio `recovery` marcado permissive en `/sepolicy` (el resto sigue enforcing) |
 
 ## Funciones del panel (`http://192.168.90.1`)
@@ -21,6 +22,13 @@ son los originales; solo se sustituye `/system/bin/recovery` por `rweb`.
 - Logs: rweb, dmesg, last_kmsg/pstore, getprop
 - Reinicio: sistema, recovery, download, fastbootd, apagar
 - Recovery stock de Samsung: menú en pantalla, borrar caché, restablecer de fábrica
+
+## Orden de arranque (BCB)
+Android y el bootloader se comunican con el recovery a través de los primeros 2048 bytes de la partición `misc`.
+Mientras ahí haya `boot-recovery` o `boot-fastboot`, el teléfono arranca recovery en cada reinicio.
+- Al arrancar, si el BCB pide fastbootd, una OTA o un borrado (`--fastboot`, `--wipe_data`, `--update_package`…), rweb cede el control al recovery de Samsung, que sabe hacerlo y limpia el BCB al terminar.
+- Todos los botones de reinicio limpian el BCB antes de reiniciar.
+- En *Reinicio y avanzado* se puede leer y limpiar el BCB a mano.
 
 ## Requisitos
 - Bootloader desbloqueado y `vbmeta` con verificación desactivada (ya lo tienes si usaste TWRP).

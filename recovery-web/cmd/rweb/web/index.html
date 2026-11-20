@@ -118,9 +118,14 @@ a{color:var(--acc)}
       <button class="b p" data-rb="system">Sistema</button>
       <button class="b" data-rb="recovery">Recovery</button>
       <button class="b" data-rb="download">Modo Download (Odin)</button>
-      <button class="b" data-rb="fastboot">fastbootd</button>
+      <button class="b" data-rb="fastboot">fastbootd (menú stock)</button>
       <button class="b d" data-rb="poweroff">Apagar</button>
     </div>
+  </div>
+  <div class="card"><h2>Orden de arranque (misc / BCB)</h2>
+    <p class="mut">Si aquí hay una orden (<code>boot-recovery</code>, <code>boot-fastboot</code>), el teléfono vuelve a entrar en recovery al reiniciar. Los botones de reinicio la limpian automáticamente.</p>
+    <pre id="bcb">—</pre>
+    <div class="row" style="margin-top:8px"><button class="b" id="bcbread">Leer</button><button class="b" id="bcbclear">Limpiar</button></div>
   </div>
   <div class="card"><h2>Recovery stock de Samsung</h2>
     <p class="mut">Usa el recovery original para mostrar su menú en pantalla o hacer un borrado oficial. <span class="warn">Puede reconfigurar el USB y cortar este panel</span>. Si pasa, reinicia a recovery.</p>
@@ -210,6 +215,10 @@ $$('[data-st]').forEach(b=>b.onclick=async()=>{const a=b.dataset.st;const h={...
   else if(!confirm('¿'+b.textContent+'?'))return;
   try{await api('/api/stock?action='+a,{method:'POST',headers:h});toast('Recovery stock iniciado','ok')}catch(e){toast(e.message,'bad')}});
 
+function showBCB(b){$('#bcb').textContent=b.command?('command: '+b.command+'\nrecovery: '+b.recovery.trim()):'(vacío: arrancará normal)'}
+$('#bcbread').onclick=async()=>{try{showBCB(await api('/api/bcb'))}catch(e){$('#bcb').textContent=e.message}};
+$('#bcbclear').onclick=async()=>{try{showBCB(await api('/api/bcb',{method:'POST',headers:H}));toast('BCB limpiado','ok')}catch(e){toast(e.message,'bad')}};
+$$('#nav button').forEach(b=>{if(b.dataset.t==='power')b.addEventListener('click',()=>$('#bcbread').click())});
 loadInfo();
 </script>
 </body>

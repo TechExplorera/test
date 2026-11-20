@@ -34,6 +34,9 @@ func main() {
 	// init reinicia el servicio si muere: evitar bucles rápidos.
 	signal.Ignore(syscall.SIGHUP, syscall.SIGPIPE)
 
+	// fastbootd, OTA o borrados pedidos desde Android los gestiona el recovery stock.
+	handoffToStock()
+
 	listen := *flagListen
 	if !*flagDev {
 		ifname, err := setupUSB()

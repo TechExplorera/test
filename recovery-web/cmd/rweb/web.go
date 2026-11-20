@@ -23,7 +23,7 @@ import (
 	"unsafe"
 )
 
-const version = "0.1.0"
+const version = "0.2.0"
 
 //go:embed web
 var webFS embed.FS
@@ -52,6 +52,7 @@ func serveHTTP(addr string) error {
 	mux.HandleFunc("/api/log", apiLog)
 	mux.HandleFunc("/api/reboot", apiReboot)
 	mux.HandleFunc("/api/stock", apiStock)
+	mux.HandleFunc("/api/bcb", apiBCB)
 	srv := &http.Server{Addr: addr, Handler: guard(mux), ReadHeaderTimeout: 15 * time.Second}
 	log.Printf("HTTP escuchando en http://%s", addr)
 	return srv.ListenAndServe()
@@ -458,6 +459,11 @@ func apiReboot(w http.ResponseWriter, r *http.Request) {
 	}
 	go func() {
 		time.Sleep(500 * time.Millisecond)
+		// Sin esto el bootloader vuelve a arrancar recovery si quedó una orden en misc.
+		// Para fastboot, init vuelve a escribir boot-fastboot después.
+		if err := clearBCB(); err != nil {
+			log.Printf("limpiar BCB antes de reiniciar: %v", err)
+		}
 		syscall.Sync()
 		_ = exec.Command("/system/bin/setprop", "sys.powerctl", val).Run()
 		time.Sleep(5 * time.Second)
@@ -470,6 +476,23 @@ func apiReboot(w http.ResponseWriter, r *http.Request) {
 		_, _, _ = syscall.Syscall6(syscall.SYS_REBOOT, 0xfee1dead, 672274793,
 			syscall.LINUX_REBOOT_CMD_RESTART2, uintptr(unsafe.Pointer(&b[0])), 0, 0)
 	}()
+}
+
+// ---------- BCB (misc) ----------
+
+func apiBCB(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		if err := clearBCB(); err != nil {
+			fail(w, 500, "limpiar BCB: %v", err)
+			return
+		}
+	}
+	b, err := readBCB()
+	if err != nil {
+		fail(w, 500, "leer BCB: %v", err)
+		return
+	}
+	jsonOut(w, b)
 }
 
 // ---------- Recovery stock de Samsung ----------
