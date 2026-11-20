@@ -1,0 +1,235 @@
+
+name: Samsung Stock Fastboot Builder
+
+on:
+  workflow_dispatch:
+    inputs:
+      recovery_url:
+        description: "URL directa del recovery o paquete de firmware"
+        required: true
+        type: string
+
+jobs:
+  build:
+    name: Download, Extract and Patch
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # 1. Preparar repositorio
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: recovery-web
+
+      # 2. Instalar Python
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # 3. Instalar dependencias
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y 7zip file curl
+          python -m pip install --upgrade pip
+          python -m pip install lz4 capstone pyelftools
+
+      # 4. Descargar herramientas originales
+      - name: Download required tools
+        run: |
+          set -euo pipefail
+
+          mkdir -p tools output
+
+          BASE="https://raw.githubusercontent.com/TechExplorera/test/recovery-web/recovery-web/tools"
+
+          curl -fL --retry 3 "$BASE/stock_fastboot.py" \
+            -o tools/stock_fastboot.py
+
+          curl -fL --retry 3 "$BASE/build_recovery.py" \
+            -o tools/build_recovery.py
+
+          python -m py_compile tools/stock_fastboot.py
+          python -m py_compile tools/build_recovery.py
+
+      # 5. Descargar archivo desde URL
+      - name: Download recovery package
+        env:
+          RECOVERY_URL: ${{ inputs.recovery_url }}
+        run: |
+          set -euo pipefail
+
+          case "$RECOVERY_URL" in
+            https://*) ;;
+            *)
+              echo "ERROR: Solo se permiten URLs HTTPS"
+              exit 1
+              ;;
+          esac
+
+          curl -fL --retry 3 \
+            --connect-timeout 30 \
+            --max-time 900 \
+            "$RECOVERY_URL" \
+            -o downloaded_file
+
+          test -s downloaded_file
+
+          echo "Archivo descargado:"
+          file downloaded_file
+
+          sha256sum downloaded_file
+
+      # 6. Detectar y extraer formatos
+      - name: Detect and extract archive
+        run: |
+          set -euo pipefail
+
+          mkdir -p extracted
+
+          python - <<'PY'
+          import os
+          import shutil
+          import subprocess
+
+          source = "downloaded_file"
+
+          with open(source, "rb") as f:
+              magic = f.read(8)
+
+          # Imagen Android directa
+          if magic.startswith(b"ANDROID!"):
+              shutil.copy2(source, "recovery_input.img")
+              print("Imagen Android detectada")
+
+          # Imagen LZ4 frame directa
+          elif magic[:4] == b"\x04\x22\x4d\x18":
+              shutil.copy2(source, "recovery_input.img.lz4")
+              print("Imagen LZ4 detectada")
+
+          else:
+              print("Extrayendo paquete...")
+
+              result = subprocess.run(
+                  ["7z", "x", "-y", "-oextracted", source],
+                  capture_output=True,
+                  text=True
+              )
+
+              if result.returncode != 0:
+                  print(result.stdout)
+                  print(result.stderr)
+                  raise SystemExit("Error extrayendo el archivo")
+
+              # Buscar recovery en todo el contenido extraído
+              candidates = []
+
+              for root, dirs, files in os.walk("extracted"):
+                  for name in files:
+                      lower = name.lower()
+
+                      if lower in (
+                          "recovery.img",
+                          "recovery.img.lz4"
+                      ):
+                          candidates.append(
+                              os.path.join(root, name)
+                          )
+
+              if len(candidates) == 0:
+                  raise SystemExit(
+                      "No se encontró recovery.img ni recovery.img.lz4"
+                  )
+
+              if len(candidates) > 1:
+                  raise SystemExit(
+                      "Se encontraron varios recoveries. "
+                      "No se seleccionará uno arbitrariamente: "
+                      + str(candidates)
+                  )
+
+              shutil.copy2(
+                  candidates[0],
+                  "recovery_input.img" +
+                  (".lz4" if candidates[0].lower().endswith(".lz4") else "")
+              )
+
+              print("Recovery encontrado:", candidates[0])
+
+          PY
+
+          ls -lh recovery_input*
+
+          file recovery_input*
+
+      # 7. Verificar imagen y compatibilidad
+      - name: Validate recovery image
+        run: |
+          set -euo pipefail
+
+          python - <<'PY'
+          import sys
+
+          path = (
+              "recovery_input.img.lz4"
+              if __import__("os").path.exists("recovery_input.img.lz4")
+              else "recovery_input.img"
+          )
+
+          with open(path, "rb") as f:
+              magic = f.read(8)
+
+          if magic == b"ANDROID!":
+              print("Android Boot Image detectada")
+          elif magic[:4] == b"\x04\x22\x4d\x18":
+              import lz4.frame
+              with open(path, "rb") as f:
+                  data = lz4.frame.decompress(f.read())
+
+              if not data.startswith(b"ANDROID!"):
+                  sys.exit("El contenido LZ4 no es una Android Boot Image")
+
+              print("Android Boot Image LZ4 detectada")
+          else:
+              sys.exit("Formato de recovery no compatible")
+
+          PY
+
+      # 8. Ejecutar herramienta Stock Fastboot
+      - name: Execute Stock Fastboot
+        run: |
+          set -euo pipefail
+
+          INPUT="recovery_input.img"
+
+          if [ -f recovery_input.img.lz4 ]; then
+            INPUT="recovery_input.img.lz4"
+          fi
+
+          python tools/stock_fastboot.py "$INPUT" output
+
+      # 9. Verificar resultados
+      - name: Verify generated files
+        run: |
+          set -euo pipefail
+
+          test -s output/recovery-stock-fastboot.img
+          test -s output/recovery-stock-fastboot.tar.md5
+
+          echo "Archivos generados:"
+          ls -lh output/
+
+          echo "SHA256:"
+          sha256sum output/*
+
+      # 10. Descargar resultados
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Samsung-Stock-Fastboot
+          path: output/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
