@@ -34,6 +34,20 @@ ramdisk directamente, usando las reglas de USB del init.rc stock (`sys.usb.confi
 - En Windows hace falta el driver USB de Google (18D1:4EE0).
 - fastbootd exige bootloader desbloqueado (`ro.boot.flash.locked=0`).
 
+## Alternativa: recovery STOCK con "Enter fastboot" reactivado
+`dist/recovery-stock-fastboot.tar.md5`: el recovery oficial de Samsung (menú en pantalla,
+SELinux y política intactos) con un único cambio de 8 bytes en `/system/bin/recovery`.
+
+El recovery comprueba si `/proc/cmdline` contiene `androidboot.fastbootd=true`
+(función en `0xf69c0` en A256EXXU7CYE1) y solo entonces permite fastbootd. La función se
+sustituye por `mov w0, #1; ret`. Se usa en tres sitios, todos de fastboot: la decisión de
+arranque, la entrada al modo (que además exige `verifiedbootstate=orange`, es decir,
+bootloader desbloqueado) y la pantalla "Android Fastboot".
+
+`tools/stock_fastboot.py` localiza la función por su contenido (mensaje del token y la
+constante de `androidboot.fastbootd=true`), no por dirección, así que sirve para otras
+versiones del firmware: `python3 tools/stock_fastboot.py recovery.img.lz4 out`.
+
 ## Pestaña Super (v0.3)
 Lee los metadatos LP de `super` y permite **backup** y **flasheo** de cada partición lógica
 (`system`, `product`, `vendor`, `odm`, `vendor_dlkm`). Escribe la imagen dentro del espacio ya
