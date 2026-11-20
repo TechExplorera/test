@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Recovery Web</title>
+<style>
+:root{--bg:#0f1115;--panel:#171a21;--line:#262b36;--text:#e6e8ee;--mut:#8a92a6;--acc:#4f8cff;--ok:#2fbf71;--bad:#ff5d5d;--warn:#f0b429}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+header{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:2}
+header h1{font-size:16px;margin:0}
+header .dev{color:var(--mut);font-size:13px}
+nav{display:flex;gap:4px;padding:8px 16px;border-bottom:1px solid var(--line);overflow-x:auto}
+nav button{background:none;border:0;color:var(--mut);padding:8px 12px;border-radius:6px;cursor:pointer;font:inherit;white-space:nowrap}
+nav button.on{background:var(--line);color:var(--text)}
+main{padding:16px;max-width:1100px;margin:0 auto}
+section{display:none}section.on{display:block}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:14px}
+.card h2{font-size:14px;margin:0 0 10px}
+table{width:100%;border-collapse:collapse}
+td,th{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle}
+th{color:var(--mut);font-weight:500;font-size:12px}
+td.num{text-align:right;font-variant-numeric:tabular-nums;color:var(--mut)}
+button.b{background:var(--line);color:var(--text);border:1px solid #333a48;border-radius:6px;padding:6px 10px;cursor:pointer;font:inherit}
+button.b:hover{border-color:var(--acc)}
+button.p{background:var(--acc);border-color:var(--acc);color:#fff}
+button.d{border-color:#6b2a2a;color:#ffb3b3}
+input[type=text],textarea{background:#0b0d11;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:7px 9px;font:13px ui-monospace,Consolas,monospace;width:100%}
+pre{background:#0b0d11;border:1px solid var(--line);border-radius:6px;padding:10px;overflow:auto;max-height:60vh;margin:0;font:12px/1.4 ui-monospace,Consolas,monospace;white-space:pre-wrap;word-break:break-all}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.mut{color:var(--mut)}.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px 16px}
+.kv span{display:block;color:var(--mut);font-size:12px}
+.bar{height:6px;background:var(--line);border-radius:3px;overflow:hidden;margin-top:6px}
+.bar i{display:block;height:100%;background:var(--acc);width:0}
+#toast{position:fixed;bottom:16px;right:16px;left:16px;max-width:520px;margin-left:auto;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 14px;display:none;z-index:9}
+a{color:var(--acc)}
+.path{font-family:ui-monospace,Consolas,monospace}
+.flt{max-width:260px}
+</style>
+</head>
+<body>
+<header><h1>Recovery Web</h1><span class="dev" id="hdr">conectando…</span></header>
+<nav id="nav">
+  <button data-t="info" class="on">Inicio</button>
+  <button data-t="parts">Particiones</button>
+  <button data-t="super">Super</button>
+  <button data-t="files">Archivos</button>
+  <button data-t="shell">Terminal</button>
+  <button data-t="logs">Logs</button>
+  <button data-t="power">Reinicio y avanzado</button>
+</nav>
+<main>
+
+<section id="info" class="on">
+  <div class="card"><h2>Dispositivo</h2><div class="grid" id="infogrid"></div></div>
+  <div class="card"><h2>Backup rápido</h2>
+    <p class="mut">Descarga al PC las particiones críticas. Guárdalas antes de flashear nada. EFS contiene el IMEI.</p>
+    <div class="row" id="quick"></div>
+  </div>
+</section>
+
+<section id="parts">
+  <div class="card">
+    <div class="row" style="justify-content:space-between;margin-bottom:8px">
+      <h2 style="margin:0">Particiones</h2>
+      <input type="text" id="pfilter" class="flt" placeholder="Filtrar…">
+    </div>
+    <table><thead><tr><th>Nombre</th><th>Dispositivo</th><th style="text-align:right">Tamaño</th><th></th></tr></thead><tbody id="ptable"></tbody></table>
+  </div>
+  <div class="card" id="flashcard" style="display:none">
+    <h2>Flashear <span id="fname" class="warn"></span></h2>
+    <p class="mut">Solo imágenes <b>.img sin comprimir</b>. Si viene como <code>.img.lz4</code> del firmware, descomprímela antes (por ejemplo con <code>lz4 -d</code> o 7-Zip con plugin).</p>
+    <div class="row"><input type="file" id="ffile"></div>
+    <p>Escribe el nombre de la partición para confirmar:</p>
+    <div class="row"><input type="text" id="fconfirm" style="max-width:260px"><button class="b d" id="fgo">Flashear</button><button class="b" id="fcancel">Cancelar</button></div>
+    <div class="bar"><i id="fbar"></i></div><div id="fmsg" class="mut"></div>
+  </div>
+</section>
+
+<section id="super">
+  <div class="card"><h2>Verificación de arranque (vbmeta)</h2>
+    <p class="mut">Para arrancar con <code>system</code>/<code>product</code>/<code>vendor</code> modificados, <code>vbmeta</code> debe tener la verificación desactivada (flag 2). Si no, el teléfono entrará en bucle o en recovery.</p>
+    <div id="vbm" class="mut">—</div>
+  </div>
+  <div class="card">
+    <h2>Particiones lógicas en super</h2>
+    <p class="mut" id="lpsum"></p>
+    <table><thead><tr><th>Nombre</th><th>Formato</th><th style="text-align:right">Tamaño</th><th></th></tr></thead><tbody id="lptable"></tbody></table>
+    <p class="mut" style="margin-top:8px">Flashear escribe la imagen dentro del espacio ya asignado a la partición (no cambia los metadatos de super). La imagen debe ser <b>raw</b> (no sparse) y caber en ese espacio. Haz <b>Backup</b> antes.</p>
+  </div>
+  <div class="card" id="lpflashcard" style="display:none">
+    <h2>Flashear lógica <span id="lpname" class="warn"></span></h2>
+    <div class="row"><input type="file" id="lpfile"></div>
+    <p>Escribe el nombre de la partición para confirmar:</p>
+    <div class="row"><input type="text" id="lpconfirm" style="max-width:260px"><button class="b d" id="lpgo">Flashear</button><button class="b" id="lpcancel">Cancelar</button></div>
+    <div class="bar"><i id="lpbar"></i></div><div id="lpmsg" class="mut"></div>
+  </div>
+</section>
+
+<section id="files">
+  <div class="card">
+    <div class="row" style="margin-bottom:8px">
+      <button class="b" id="up">↑</button>
+      <input type="text" id="cwd" value="/" class="path" style="flex:1;min-width:200px">
+      <button class="b" id="go">Ir</button>
+      <label class="b" style="cursor:pointer">Subir archivo aquí<input type="file" id="upfile" hidden></label>
+    </div>
+    <table><thead><tr><th>Nombre</th><th>Permisos</th><th style="text-align:right">Tamaño</th><th></th></tr></thead><tbody id="ftable"></tbody></table>
+  </div>
+</section>
+
+<section id="shell">
+  <div class="card">
+    <h2>Terminal (root)</h2>
+    <p class="mut">Cada comando se ejecuta con <code>sh -c</code>, sin sesión persistente. Encadena con <code>&amp;&amp;</code> o <code>;</code>.</p>
+    <div class="row" style="margin-bottom:8px"><input type="text" id="cmd" placeholder="ls -l /dev/block/by-name" style="flex:1"><button class="b p" id="run">Ejecutar</button></div>
+    <pre id="out"></pre>
+  </div>
+</section>
+
+<section id="logs">
+  <div class="card">
+    <div class="row" style="margin-bottom:8px">
+      <button class="b" data-log="rweb">Recovery Web</button>
+      <button class="b" data-log="dmesg">dmesg</button>
+      <button class="b" data-log="last_kmsg">last_kmsg / pstore</button>
+      <button class="b" data-log="props">getprop</button>
+      <button class="b" id="logsave">Guardar</button>
+    </div>
+    <pre id="logout"></pre>
+  </div>
+</section>
+
+<section id="power">
+  <div class="card"><h2>Reiniciar</h2>
+    <div class="row">
+      <button class="b p" data-rb="system">Sistema</button>
+      <button class="b" data-rb="recovery">Recovery</button>
+      <button class="b" data-rb="download">Modo Download (Odin)</button>
+      <button class="b" data-rb="fastboot">Reiniciar a fastbootd</button>
+      <button class="b d" data-rb="poweroff">Apagar</button>
+    </div>
+  </div>
+  <div class="card"><h2>fastbootd</h2>
+    <p class="mut">Pasa el USB a modo fastboot sin reiniciar. <span class="warn">Este panel dejará de responder</span> hasta que vuelvas con <code>fastboot reboot recovery</code>. En Windows necesitas el driver de Google (USB 18D1:4EE0).</p>
+    <pre>fastboot devices
+fastboot getvar all
+fastboot flash vendor_boot vendor_boot.img
+fastboot reboot            # sistema
+fastboot reboot recovery   # volver a Recovery Web</pre>
+    <div class="row" style="margin-top:8px"><button class="b p" id="fbgo">Entrar en fastbootd ahora</button></div>
+  </div>
+  <div class="card"><h2>Orden de arranque (misc / BCB)</h2>
+    <p class="mut">Si aquí hay una orden (<code>boot-recovery</code>, <code>boot-fastboot</code>), el teléfono vuelve a entrar en recovery al reiniciar. Los botones de reinicio la limpian automáticamente.</p>
+    <pre id="bcb">—</pre>
+    <div class="row" style="margin-top:8px"><button class="b" id="bcbread">Leer</button><button class="b" id="bcbclear">Limpiar</button></div>
+  </div>
+  <div class="card"><h2>Recovery stock de Samsung</h2>
+    <p class="mut">Usa el recovery original para mostrar su menú en pantalla o hacer un borrado oficial. <span class="warn">Puede reconfigurar el USB y cortar este panel</span>. Si pasa, reinicia a recovery.</p>
+    <div class="row">
+      <button class="b" data-st="ui">Mostrar menú stock en pantalla</button>
+      <button class="b" data-st="wipe_cache">Borrar caché</button>
+      <button class="b d" data-st="wipe_data">Restablecer de fábrica (borra /data)</button>
+    </div>
+  </div>
+</section>
+</main>
+<div id="toast"></div>
+<script>
+const $=s=>document.querySelector(s), $$=s=>document.querySelectorAll(s);
+const H={'X-RWeb':'1'};
+function toast(m,c){const t=$('#toast');t.textContent=m;t.className=c||'';t.style.display='block';clearTimeout(t._h);t._h=setTimeout(()=>t.style.display='none',6000)}
+function hs(n){if(n==null)return'';const u=['B','KB','MB','GB','TB'];let i=0;while(n>=1024&&i<4){n/=1024;i++}return(i?n.toFixed(1):n)+' '+u[i]}
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+async function api(u,o){const r=await fetch(u,o);if(!r.ok)throw new Error(await r.text()||r.status);return r.headers.get('content-type')?.includes('json')?r.json():r.text()}
+function dl(u){const a=document.createElement('a');a.href=u;a.download='';document.body.appendChild(a);a.click();a.remove()}
+
+$$('#nav button').forEach(b=>b.onclick=()=>{$$('#nav button').forEach(x=>x.classList.toggle('on',x===b));$$('section').forEach(s=>s.classList.toggle('on',s.id===b.dataset.t));if(b.dataset.t==='parts')loadParts();if(b.dataset.t==='files')loadDir();if(b.dataset.t==='super')loadSuper()});
+
+let LP=[],VBOK=false;
+async function loadSuper(){
+  try{const v=await api('/api/vbmeta');VBOK=v[0].present&&v[0].verification_disabled;
+    $('#vbm').innerHTML=v.map(x=>`<div><b>${x.name}</b>: ${!x.present?'<span class="mut">no encontrado</span>':`flags=${x.flags} · ${x.verification_disabled?'<span class="ok">verificación desactivada</span>':x.hashtree_disabled?'<span class="warn">solo dm-verity desactivado</span>':'<span class="bad">verificación ACTIVA</span>'}`}</div>`).join('')}catch(e){$('#vbm').textContent=e.message}
+  try{const l=await api('/api/lp');LP=l.partitions;
+    $('#lpsum').textContent=`super: ${hs(l.super_size)} · asignado: ${hs(l.used)} · libre: ${hs(l.super_size-l.used)}`;
+    $('#lptable').innerHTML=LP.map(p=>`<tr><td><b>${esc(p.name)}</b> <span class="mut">${esc(p.group)}</span></td><td class="mut">${esc(p.fs)}</td><td class="num">${hs(p.size)}</td><td style="text-align:right;white-space:nowrap"><button class="b" onclick="dl('/api/lpdump?name=${encodeURIComponent(p.name)}')">Backup</button> <button class="b d" onclick="openLP('${esc(p.name)}')">Flashear</button></td></tr>`).join('')}
+  catch(e){$('#lpsum').innerHTML='<span class="bad">'+esc(e.message)+'</span>'}
+}
+let LPF=null;
+function openLP(n){LPF=n;$('#lpname').textContent=n;$('#lpconfirm').value='';$('#lpfile').value='';$('#lpbar').style.width=0;$('#lpmsg').textContent=VBOK?'':'⚠ vbmeta tiene la verificación activa: con una imagen modificada el teléfono no arrancará.';$('#lpflashcard').style.display='block';$('#lpflashcard').scrollIntoView({behavior:'smooth'})}
+$('#lpcancel').onclick=()=>{$('#lpflashcard').style.display='none';LPF=null};
+$('#lpgo').onclick=()=>{
+  const f=$('#lpfile').files[0];if(!f)return toast('Elige un archivo','warn');
+  if($('#lpconfirm').value!==LPF)return toast('El nombre no coincide','warn');
+  const p=LP.find(x=>x.name===LPF);if(p&&f.size>p.size)return toast('La imagen no cabe en la partición','bad');
+  if(!VBOK&&!confirm('vbmeta tiene la verificación activa. ¿Flashear de todos modos?'))return;
+  const x=new XMLHttpRequest();x.open('POST','/api/lpflash?name='+encodeURIComponent(LPF));x.setRequestHeader('X-RWeb','1');x.setRequestHeader('X-Confirm',LPF);
+  x.upload.onprogress=e=>{if(e.lengthComputable){$('#lpbar').style.width=(e.loaded/e.total*100)+'%';$('#lpmsg').textContent=hs(e.loaded)+' / '+hs(e.total)}};
+  x.onload=()=>{if(x.status===200){$('#lpmsg').innerHTML='<span class="ok">Flasheado correctamente.</span>';toast('Flasheado '+LPF,'ok');loadSuper()}else{$('#lpmsg').innerHTML='<span class="bad">'+esc(x.responseText)+'</span>'}};
+  x.onerror=()=>$('#lpmsg').innerHTML='<span class="bad">Conexión perdida</span>';
+  $('#lpmsg').textContent='Enviando…';x.send(f);
+};
+
+async function loadInfo(){
+  try{const i=await api('/api/info');
+    $('#hdr').textContent=(i['ro.product.model']||'?')+' · '+(i['ro.build.PDA']||'')+' · rweb '+i.rweb;
+    const L={'ro.product.model':'Modelo','ro.product.device':'Código','ro.build.PDA':'Firmware','ro.bootloader':'Bootloader','ro.build.version.release':'Android','kernel':'Kernel','selinux_enforce':'SELinux','battery':'Batería','ro.boot.verifiedbootstate':'Verified boot','ro.boot.flash.locked':'Bootloader bloqueado','ro.boot.warranty_bit':'Knox warranty bit','ro.serialno':'Nº de serie'};
+    $('#infogrid').innerHTML=Object.entries(L).map(([k,l])=>{let v=i[k]??'';if(k==='selinux_enforce')v=v==='0'?'permissive':v==='1'?'enforcing':v;return`<div class="kv"><span>${l}</span>${esc(v||'—')}</div>`}).join('');
+  }catch(e){$('#hdr').textContent='sin conexión: '+e.message}
+  const q=['efs','sec_efs','param','up_param','boot','recovery','vbmeta','dtbo','vendor_boot','persistent','steady','keydata','keyrefuge'];
+  let ps=[];try{ps=await api('/api/parts')}catch(e){}
+  const have=new Set(ps.map(p=>p.name));
+  $('#quick').innerHTML=q.filter(n=>have.has(n)).map(n=>`<button class="b" onclick="dl('/api/dump?name=${n}')">${n}</button>`).join('')||'<span class="mut">No se detectaron particiones.</span>';
+}
+
+let PARTS=[];
+async function loadParts(){
+  try{PARTS=await api('/api/parts')}catch(e){toast(e.message,'bad');return}
+  renderParts();
+}
+function renderParts(){
+  const f=$('#pfilter').value.toLowerCase();
+  $('#ptable').innerHTML=PARTS.filter(p=>p.name.toLowerCase().includes(f)).map(p=>`<tr><td><b>${esc(p.name)}</b></td><td class="mut path">${esc(p.dev)}</td><td class="num">${hs(p.size)}</td><td style="text-align:right;white-space:nowrap"><button class="b" onclick="dl('/api/dump?name=${encodeURIComponent(p.name)}')">Backup</button> <button class="b d" onclick="openFlash('${esc(p.name)}')">Flashear</button></td></tr>`).join('');
+}
+$('#pfilter').oninput=renderParts;
+let FL=null;
+function openFlash(n){FL=n;$('#fname').textContent=n;$('#fconfirm').value='';$('#ffile').value='';$('#fbar').style.width=0;$('#fmsg').textContent='';$('#flashcard').style.display='block';$('#flashcard').scrollIntoView({behavior:'smooth'})}
+$('#fcancel').onclick=()=>{$('#flashcard').style.display='none';FL=null};
+$('#fgo').onclick=()=>{
+  const f=$('#ffile').files[0];if(!f)return toast('Elige un archivo','warn');
+  if($('#fconfirm').value!==FL)return toast('El nombre no coincide','warn');
+  const p=PARTS.find(x=>x.name===FL);if(p&&f.size>p.size)return toast('La imagen es mayor que la partición','bad');
+  const x=new XMLHttpRequest();x.open('POST','/api/flash?name='+encodeURIComponent(FL));x.setRequestHeader('X-RWeb','1');x.setRequestHeader('X-Confirm',FL);
+  x.upload.onprogress=e=>{if(e.lengthComputable){$('#fbar').style.width=(e.loaded/e.total*100)+'%';$('#fmsg').textContent=hs(e.loaded)+' / '+hs(e.total)}};
+  x.onload=()=>{if(x.status===200){$('#fmsg').innerHTML='<span class="ok">Flasheado correctamente.</span>';toast('Flasheado '+FL,'ok')}else{$('#fmsg').innerHTML='<span class="bad">'+esc(x.responseText)+'</span>'}};
+  x.onerror=()=>$('#fmsg').innerHTML='<span class="bad">Conexión perdida</span>';
+  $('#fmsg').textContent='Enviando…';x.send(f);
+};
+
+async function loadDir(p){
+  if(p!=null)$('#cwd').value=p;p=$('#cwd').value||'/';
+  let es;try{es=await api('/api/ls?path='+encodeURIComponent(p))}catch(e){toast(e.message,'bad');return}
+  const j=n=>(p.endsWith('/')?p:p+'/')+n;
+  $('#ftable').innerHTML=es.map(e=>`<tr><td>${e.dir?`<a href="#" onclick="loadDir('${esc(j(e.name)).replace(/'/g,"\\'")}');return false">📁 ${esc(e.name)}</a>`:esc(e.name)}${e.link?` <span class="mut">→ ${esc(e.link)}</span>`:''}</td><td class="mut path">${esc(e.mode)}</td><td class="num">${e.dir?'':hs(e.size)}</td><td style="text-align:right">${e.dir?'':`<button class="b" onclick="dl('/api/file?path=${encodeURIComponent(j(e.name))}')">Descargar</button>`}</td></tr>`).join('')||'<tr><td class="mut" colspan="4">Vacío</td></tr>';
+}
+$('#go').onclick=()=>loadDir();$('#cwd').onkeydown=e=>{if(e.key==='Enter')loadDir()};
+$('#up').onclick=()=>{let p=$('#cwd').value.replace(/\/+$/,'');p=p.slice(0,p.lastIndexOf('/'))||'/';loadDir(p)};
+$('#upfile').onchange=async e=>{const f=e.target.files[0];if(!f)return;const p=$('#cwd').value.replace(/\/?$/,'/')+f.name;
+  try{await api('/api/upload?path='+encodeURIComponent(p),{method:'POST',headers:H,body:f});toast('Subido '+p,'ok');loadDir()}catch(er){toast(er.message,'bad')}e.target.value=''};
+
+const hist=[];let hi=0;
+async function run(){const c=$('#cmd').value.trim();if(!c)return;hist.push(c);hi=hist.length;
+  $('#out').textContent+='# '+c+'\n';
+  try{const r=await api('/api/shell',{method:'POST',headers:{...H,'Content-Type':'application/json'},body:JSON.stringify({cmd:c})});
+    $('#out').textContent+=r.out+(r.code?`[código ${r.code}]\n`:'')}catch(e){$('#out').textContent+='ERROR: '+e.message+'\n'}
+  $('#out').scrollTop=1e9;$('#cmd').value=''}
+$('#run').onclick=run;
+$('#cmd').onkeydown=e=>{if(e.key==='Enter')run();if(e.key==='ArrowUp'&&hi>0){$('#cmd').value=hist[--hi]}if(e.key==='ArrowDown'&&hi<hist.length){$('#cmd').value=hist[++hi]||''}};
+
+let LOGSRC='rweb';
+$$('[data-log]').forEach(b=>b.onclick=async()=>{LOGSRC=b.dataset.log;$('#logout').textContent='Cargando…';try{$('#logout').textContent=await api('/api/log?src='+LOGSRC)}catch(e){$('#logout').textContent=e.message}});
+$('#logsave').onclick=()=>{const b=new Blob([$('#logout').textContent]);const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=LOGSRC+'.txt';a.click()};
+
+$$('[data-rb]').forEach(b=>b.onclick=async()=>{const m=b.dataset.rb;if(!confirm('¿'+b.textContent+'?'))return;try{await api('/api/reboot?mode='+m,{method:'POST',headers:H});toast('Reiniciando: '+b.textContent,'ok')}catch(e){toast(e.message,'bad')}});
+$$('[data-st]').forEach(b=>b.onclick=async()=>{const a=b.dataset.st;const h={...H};
+  if(a==='wipe_data'){if(prompt('Esto BORRA todas tus apps y datos. Escribe BORRAR para continuar:')!=='BORRAR')return;h['X-Confirm']='BORRAR'}
+  else if(!confirm('¿'+b.textContent+'?'))return;
+  try{await api('/api/stock?action='+a,{method:'POST',headers:h});toast('Recovery stock iniciado','ok')}catch(e){toast(e.message,'bad')}});
+
+$('#fbgo').onclick=async()=>{if(!confirm('El USB pasará a fastboot y este panel dejará de responder. ¿Continuar?'))return;
+  try{await api('/api/fastbootd',{method:'POST',headers:H});toast('Entrando en fastbootd: usa "fastboot devices" en el PC','ok');$('#hdr').textContent='modo fastbootd: vuelve con "fastboot reboot recovery"'}catch(e){toast(e.message,'bad')}};
+function showBCB(b){$('#bcb').textContent=b.command?('command: '+b.command+'\nrecovery: '+b.recovery.trim()):'(vacío: arrancará normal)'}
+$('#bcbread').onclick=async()=>{try{showBCB(await api('/api/bcb'))}catch(e){$('#bcb').textContent=e.message}};
+$('#bcbclear').onclick=async()=>{try{showBCB(await api('/api/bcb',{method:'POST',headers:H}));toast('BCB limpiado','ok')}catch(e){toast(e.message,'bad')}};
+$$('#nav button').forEach(b=>{if(b.dataset.t==='power')b.addEventListener('click',()=>$('#bcbread').click())});
+loadInfo();
+</script>
+</body>
+</html>
