@@ -23,6 +23,17 @@ son los originales; solo se sustituye `/system/bin/recovery` por `rweb`.
 - Reinicio: sistema, recovery, download, fastbootd, apagar
 - Recovery stock de Samsung: menú en pantalla, borrar caché, restablecer de fábrica
 
+## fastbootd (v0.4)
+El recovery de Samsung solo permite fastbootd si el bootloader le pasa un "fastbootd token"
+en `/proc/cmdline`, cosa que los equipos de venta no hacen. rweb arranca el `fastbootd` del
+ramdisk directamente, usando las reglas de USB del init.rc stock (`sys.usb.config=fastboot`).
+- **Desde el panel**: *Reinicio y avanzado* → *Entrar en fastbootd ahora* (sin reiniciar).
+- **Reiniciando**: botón *Reiniciar a fastbootd*, `adb reboot fastboot` o `fastboot reboot fastboot`.
+- Mientras está activo, el USB es fastboot y el panel no responde.
+  Para volver: `fastboot reboot recovery`. Para el sistema: `fastboot reboot`.
+- En Windows hace falta el driver USB de Google (18D1:4EE0).
+- fastbootd exige bootloader desbloqueado (`ro.boot.flash.locked=0`).
+
 ## Pestaña Super (v0.3)
 Lee los metadatos LP de `super` y permite **backup** y **flasheo** de cada partición lógica
 (`system`, `product`, `vendor`, `odm`, `vendor_dlkm`). Escribe la imagen dentro del espacio ya

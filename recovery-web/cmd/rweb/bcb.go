@@ -82,22 +82,39 @@ func stockRequest(b bcb) ([]string, bool) {
 	return args, b.Command == "boot-fastboot"
 }
 
-// handoffToStock: si el BCB pide algo que solo sabe hacer el recovery de Samsung
-// (fastbootd, OTA, borrado pedido desde Ajustes...), se le cede el control.
-// Si no vuelve (exec correcto), esta función no retorna.
-func handoffToStock() {
+// wantsFastboot indica si el BCB pide fastbootd (reboot fastboot / "fastboot reboot fastboot").
+func wantsFastboot(b bcb) bool {
+	if b.Command == "boot-fastboot" {
+		return true
+	}
+	for _, a := range strings.Fields(b.Recovery) {
+		if a == "--fastboot" {
+			return true
+		}
+	}
+	return false
+}
+
+// handleBCB actúa según la orden pendiente en misc:
+//   - fastbootd: lo gestiona rweb (devuelve true; el llamador no debe montar RNDIS).
+//   - OTA, borrados y demás argumentos: se cede el control al recovery de Samsung
+//     (si el exec funciona, esta función no retorna).
+func handleBCB() (fastboot bool) {
 	if *flagDev {
-		return
+		return false
 	}
 	b, err := readBCB()
 	if err != nil {
 		log.Printf("BCB: %v", err)
-		return
+		return false
 	}
 	log.Printf("BCB: command=%q recovery=%q", b.Command, strings.ReplaceAll(b.Recovery, "\n", " "))
+	if wantsFastboot(b) {
+		return true
+	}
 	args, ok := stockRequest(b)
 	if !ok {
-		return
+		return false
 	}
 	const stock = "/system/bin/recovery.samsung"
 	log.Printf("cediendo el control al recovery stock (%s %v)", b.Command, args)
@@ -107,4 +124,5 @@ func handoffToStock() {
 			log.Printf("limpiar BCB: %v", err)
 		}
 	}
+	return false
 }

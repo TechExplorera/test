@@ -20,3 +20,21 @@ func TestStockRequest(t *testing.T) {
 		}
 	}
 }
+
+func TestWantsFastboot(t *testing.T) {
+	cases := []struct {
+		b    bcb
+		want bool
+	}{
+		{bcb{}, false},
+		{bcb{Command: "boot-fastboot"}, true},
+		{bcb{Command: "boot-recovery", Recovery: "recovery\n--fastboot\n"}, true},
+		{bcb{Command: "boot-recovery", Recovery: "recovery\n--wipe_data\n"}, false},
+		{bcb{Command: "boot-recovery", Recovery: "recovery\n--fastbootx\n"}, false},
+	}
+	for _, c := range cases {
+		if got := wantsFastboot(c.b); got != c.want {
+			t.Errorf("%+v: got %v want %v", c.b, got, c.want)
+		}
+	}
+}

@@ -139,9 +139,18 @@ a{color:var(--acc)}
       <button class="b p" data-rb="system">Sistema</button>
       <button class="b" data-rb="recovery">Recovery</button>
       <button class="b" data-rb="download">Modo Download (Odin)</button>
-      <button class="b" data-rb="fastboot">fastbootd (menú stock)</button>
+      <button class="b" data-rb="fastboot">Reiniciar a fastbootd</button>
       <button class="b d" data-rb="poweroff">Apagar</button>
     </div>
+  </div>
+  <div class="card"><h2>fastbootd</h2>
+    <p class="mut">Pasa el USB a modo fastboot sin reiniciar. <span class="warn">Este panel dejará de responder</span> hasta que vuelvas con <code>fastboot reboot recovery</code>. En Windows necesitas el driver de Google (USB 18D1:4EE0).</p>
+    <pre>fastboot devices
+fastboot getvar all
+fastboot flash vendor_boot vendor_boot.img
+fastboot reboot            # sistema
+fastboot reboot recovery   # volver a Recovery Web</pre>
+    <div class="row" style="margin-top:8px"><button class="b p" id="fbgo">Entrar en fastbootd ahora</button></div>
   </div>
   <div class="card"><h2>Orden de arranque (misc / BCB)</h2>
     <p class="mut">Si aquí hay una orden (<code>boot-recovery</code>, <code>boot-fastboot</code>), el teléfono vuelve a entrar en recovery al reiniciar. Los botones de reinicio la limpian automáticamente.</p>
@@ -260,6 +269,8 @@ $$('[data-st]').forEach(b=>b.onclick=async()=>{const a=b.dataset.st;const h={...
   else if(!confirm('¿'+b.textContent+'?'))return;
   try{await api('/api/stock?action='+a,{method:'POST',headers:h});toast('Recovery stock iniciado','ok')}catch(e){toast(e.message,'bad')}});
 
+$('#fbgo').onclick=async()=>{if(!confirm('El USB pasará a fastboot y este panel dejará de responder. ¿Continuar?'))return;
+  try{await api('/api/fastbootd',{method:'POST',headers:H});toast('Entrando en fastbootd: usa "fastboot devices" en el PC','ok');$('#hdr').textContent='modo fastbootd: vuelve con "fastboot reboot recovery"'}catch(e){toast(e.message,'bad')}};
 function showBCB(b){$('#bcb').textContent=b.command?('command: '+b.command+'\nrecovery: '+b.recovery.trim()):'(vacío: arrancará normal)'}
 $('#bcbread').onclick=async()=>{try{showBCB(await api('/api/bcb'))}catch(e){$('#bcb').textContent=e.message}};
 $('#bcbclear').onclick=async()=>{try{showBCB(await api('/api/bcb',{method:'POST',headers:H}));toast('BCB limpiado','ok')}catch(e){toast(e.message,'bad')}};
