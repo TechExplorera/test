@@ -1,0 +1,96 @@
+
+name: Samsung Stock Fastboot Builder
+
+on:
+  workflow_dispatch:
+    inputs:
+      recovery_url:
+        description: "URL directa del recovery.img o recovery.img.lz4"
+        required: true
+        type: string
+
+jobs:
+  build:
+    name: Build Stock Fastboot
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: recovery-web
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install lz4 capstone pyelftools
+
+      - name: Prepare tools
+        run: |
+          mkdir -p tools output
+
+          curl -fL --retry 3 \
+            https://raw.githubusercontent.com/TechExplorera/test/recovery-web/recovery-web/tools/stock_fastboot.py \
+            -o tools/stock_fastboot.py
+
+          curl -fL --retry 3 \
+            https://raw.githubusercontent.com/TechExplorera/test/recovery-web/recovery-web/tools/build_recovery.py \
+            -o tools/build_recovery.py
+
+          python -m py_compile tools/stock_fastboot.py
+          python -m py_compile tools/build_recovery.py
+
+      - name: Download recovery image
+        env:
+          RECOVERY_URL: ${{ inputs.recovery_url }}
+        run: |
+          set -euo pipefail
+
+          case "$RECOVERY_URL" in
+            https://*) ;;
+            *) echo "ERROR: Se requiere una URL HTTPS"; exit 1 ;;
+          esac
+
+          curl -fL --retry 3 \
+            "$RECOVERY_URL" \
+            -o recovery.img
+
+          if [ ! -s recovery.img ]; then
+            echo "ERROR: Archivo recovery vacío"
+            exit 1
+          fi
+
+          file recovery.img
+          sha256sum recovery.img
+
+      - name: Patch Stock Recovery
+        run: |
+          set -euo pipefail
+
+          python tools/stock_fastboot.py \
+            recovery.img \
+            output
+
+      - name: Verify output
+        run: |
+          set -euo pipefail
+
+          test -s output/recovery-stock-fastboot.img
+          test -s output/recovery-stock-fastboot.tar.md5
+
+          sha256sum output/*
+
+      - name: Upload modified recovery
+        uses: actions/upload-artifact@v4
+        with:
+          name: Samsung-Stock-Fastboot
+          path: output/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
