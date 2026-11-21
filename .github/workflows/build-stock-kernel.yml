@@ -6,6 +6,9 @@ name: Build stock kernel (A256E)
 
 on:
   push:
+    paths-ignore:
+      - "recovery-web/**"
+      - ".github/workflows/build-debloat.yml"
   workflow_dispatch:
     inputs:
       kernel_url:
