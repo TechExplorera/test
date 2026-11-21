@@ -105,9 +105,14 @@ jobs:
         run: |
           mkdir -p dist
           cp kernel/arch/arm64/boot/Image dist/ 2>/dev/null || true
-          cp kernel/arch/arm64/boot/dts/exynos/s5e8825.dtb dist/ 2>/dev/null || true
           cp kernel/.config dist/config 2>/dev/null || true
           cp build.log dist/ 2>/dev/null || true
+          # dtb -> dtb.img (como Samsung) + .lz4 para el tar de Odin (lleva el OC)
+          if [ -f kernel/arch/arm64/boot/dts/exynos/s5e8825.dtb ]; then
+            cp kernel/arch/arm64/boot/dts/exynos/s5e8825.dtb dist/s5e8825.dtb
+            cp kernel/arch/arm64/boot/dts/exynos/s5e8825.dtb dist/dtb.img
+            lz4 -9 -f dist/dtb.img dist/dtb.img.lz4 || true
+          fi
           ls -la dist
 
       - name: Upload artifact
